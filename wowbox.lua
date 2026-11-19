@@ -48,6 +48,9 @@ local function EnsureDB()
 	if WowBoxDB.sort ~= "price" then
 		WowBoxDB.sort = "default"
 	end
+	if WowBoxDB.writFilter ~= "available" and WowBoxDB.writFilter ~= "missing" then
+		WowBoxDB.writFilter = "all"
+	end
 end
 
 local function NormalizeBullets(text)
@@ -953,6 +956,28 @@ local function PriceSuffix(name, qty)
 	return "   " .. Money(value * (qty or 1))
 end
 
+local function HasPrice(name)
+	if type(name) ~= "string" then
+		return false
+	end
+	local value = prices[name:lower()]
+	return type(value) == "number" and value > 0
+end
+
+local function WritMissing(entry)
+	return not HasPrice(entry.name) or not HasPrice(entry.searchName)
+end
+
+local function FilterLabel(mode)
+	if mode == "available" then
+		return "Available"
+	end
+	if mode == "missing" then
+		return "Missing"
+	end
+	return "All"
+end
+
 local function AuctionHouseOpen()
 	if AuctionHouseFrame and AuctionHouseFrame.IsShown and AuctionHouseFrame:IsShown() then
 		return "modern"
@@ -1057,6 +1082,12 @@ local function TakeRow(index)
 	row.count:SetPoint("TOPRIGHT", -6, -4)
 	row.count:SetJustifyH("RIGHT")
 
+	row.flag = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	row.flag:SetPoint("RIGHT", row.count, "LEFT", -8, 0)
+	row.flag:SetJustifyH("RIGHT")
+	row.flag:SetText("|cffff4040missing|r")
+	row.flag:Hide()
+
 	row.detail = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	row.detail:SetPoint("TOPLEFT", 38, -20)
 	row.detail:SetWidth(ROW_WIDTH - 48)
@@ -1154,6 +1185,18 @@ local function PlaceRow(index, entry, y)
 	row:SetSize(ROW_WIDTH, 40)
 	row.icon:SetTexture(entry.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
 	row.name:SetText(QualityPrefix(entry.link) .. entry.name .. "|r" .. (entry.rank and (" |cffc9b27c(" .. entry.rank .. ")|r") or ""))
+	local missing = entry.kind == "writ" and WritMissing(entry)
+	if missing then
+		row.flag:Show()
+		row.name:ClearAllPoints()
+		row.name:SetPoint("TOPLEFT", 38, -4)
+		row.name:SetPoint("RIGHT", row.flag, "LEFT", -6, 0)
+	else
+		row.flag:Hide()
+		row.name:ClearAllPoints()
+		row.name:SetPoint("TOPLEFT", 38, -4)
+		row.name:SetPoint("RIGHT", row.count, "LEFT", -6, 0)
+	end
 	local owned = (entry.count or 0) > 0
 	if owned then
 		row.count:SetText("|cffffffffx" .. entry.count .. "|r")
@@ -1193,7 +1236,21 @@ function Render()
 	local y = -4
 	local headerIndex = 0
 	local rowIndex = 0
-	local entries = view == "writs" and writs or crates
+	local entries = crates
+	if view == "writs" then
+		local mode = WowBoxDB and WowBoxDB.writFilter or "all"
+		if mode == "all" then
+			entries = writs
+		else
+			entries = {}
+			for i = 1, #writs do
+				local missing = WritMissing(writs[i])
+				if (mode == "missing" and missing) or (mode == "available" and not missing) then
+					entries[#entries + 1] = writs[i]
+				end
+			end
+		end
+	end
 
 	if #entries == 0 then
 		headerIndex = headerIndex + 1
@@ -1212,7 +1269,11 @@ function Render()
 			owned = owned + 1
 		end
 	end
-	frame.status:SetText(owned .. " in your bags. " .. #entries .. " total.")
+	if view == "writs" and WowBoxDB and WowBoxDB.writFilter ~= "all" then
+		frame.status:SetText(owned .. " in your bags. " .. #entries .. " shown.")
+	else
+		frame.status:SetText(owned .. " in your bags. " .. #entries .. " total.")
+	end
 end
 
 local function ShowTab(which)
@@ -1229,6 +1290,22 @@ local function ShowTab(which)
 		else
 			frame.writsButton:LockHighlight()
 			frame.cratesButton:UnlockHighlight()
+		end
+	end
+	if frame and frame.writFilter then
+		if which == "writs" then
+			frame.writFilter:Show()
+			frame.status:ClearAllPoints()
+			frame.status:SetPoint("LEFT", frame.writFilter, "RIGHT", 8, 2)
+			frame.status:SetPoint("RIGHT", frame, "RIGHT", -16, 0)
+		else
+			frame.writFilter:Hide()
+			if frame.writMenu then
+				frame.writMenu:Hide()
+			end
+			frame.status:ClearAllPoints()
+			frame.status:SetPoint("LEFT", frame.refresh, "RIGHT", 10, 0)
+			frame.status:SetPoint("RIGHT", frame, "RIGHT", -16, 0)
 		end
 	end
 	if frame and frame.scroll then
@@ -1416,6 +1493,69 @@ local function BuildFrame()
 	refresh:SetPoint("BOTTOMLEFT", 14, 12)
 	refresh:SetText("Refresh")
 	refresh:SetScript("OnClick", Refresh)
+	frame.refresh = refresh
+
+	local filter = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	filter:SetSize(148, 22)
+	filter:SetPoint("LEFT", refresh, "RIGHT", 8, 0)
+	filter:SetText("Show: All")
+	filter:Hide()
+	frame.writFilter = filter
+
+	local menu = CreateFrame("Frame", nil, filter)
+	menu:SetSize(148, 70)
+	menu:SetPoint("BOTTOMLEFT", filter, "TOPLEFT", 0, 2)
+	menu:SetFrameStrata("DIALOG")
+	menu:Hide()
+	menu:EnableMouse(true)
+	local menuBg = menu:CreateTexture(nil, "BACKGROUND")
+	menuBg:SetColorTexture(0.07, 0.06, 0.05, 1)
+	local menuEdge = menu:CreateTexture(nil, "BORDER")
+	menuEdge:SetAllPoints()
+	menuEdge:SetColorTexture(0.85, 0.7, 0.35, 1)
+	menuBg:SetPoint("TOPLEFT", 1, -1)
+	menuBg:SetPoint("BOTTOMRIGHT", -1, 1)
+	frame.writMenu = menu
+
+	local function ApplyFilter(mode)
+		EnsureDB()
+		if mode ~= "available" and mode ~= "missing" then
+			mode = "all"
+		end
+		WowBoxDB.writFilter = mode
+		filter:SetText("Show: " .. FilterLabel(mode))
+		menu:Hide()
+		if frame.scroll then
+			frame.scroll:SetVerticalScroll(0)
+		end
+		if frame:IsShown() then
+			Render()
+		end
+	end
+
+	local choices = { "all", "available", "missing" }
+	for i = 1, #choices do
+		local mode = choices[i]
+		local choice = CreateFrame("Button", nil, menu)
+		choice:SetSize(144, 20)
+		choice:SetPoint("TOPLEFT", 2, -2 - (i - 1) * 22)
+		local label = choice:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+		label:SetPoint("LEFT", 8, 0)
+		label:SetText(FilterLabel(mode))
+		choice:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+		choice:SetScript("OnClick", function()
+			ApplyFilter(mode)
+		end)
+	end
+
+	filter:SetScript("OnClick", function()
+		if menu:IsShown() then
+			menu:Hide()
+		else
+			menu:Show()
+		end
+	end)
+	ApplyFilter(WowBoxDB.writFilter)
 
 	local status = frame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 	status:SetPoint("LEFT", refresh, "RIGHT", 10, 0)
