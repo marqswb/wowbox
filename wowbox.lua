@@ -690,6 +690,7 @@ function LoadSavedPrices()
 			item = item[1]
 		end
 		note(item)
+		note("Craftsman's Writ: " .. item)
 	end
 end
 
