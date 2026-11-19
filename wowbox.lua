@@ -1082,10 +1082,9 @@ local function TakeRow(index)
 	row.count:SetPoint("TOPRIGHT", -6, -4)
 	row.count:SetJustifyH("RIGHT")
 
-	row.flag = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	row.flag:SetPoint("RIGHT", row.count, "LEFT", -8, 0)
+	row.flag = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+	row.flag:SetPoint("RIGHT", row.count, "LEFT", -10, 0)
 	row.flag:SetJustifyH("RIGHT")
-	row.flag:SetText("|cffff4040missing|r")
 	row.flag:Hide()
 
 	row.detail = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -1141,10 +1140,6 @@ local function DetailText(entry)
 			if writPrice ~= "" then
 				text = text .. "\nWrit" .. writPrice
 			end
-			local cheapest = CheapestTotal(entry)
-			if cheapest then
-				text = text .. "\n|cffffd100Total|r  " .. Money(cheapest)
-			end
 			return text
 		end
 		return "|cffff8080Could not read the writ item.|r"
@@ -1161,10 +1156,6 @@ local function DetailText(entry)
 	local cratePrice = PriceSuffix(entry.name, 1)
 	if cratePrice ~= "" then
 		lines[#lines + 1] = "Crate" .. cratePrice
-	end
-	local cheapest = CheapestTotal(entry)
-	if cheapest then
-		lines[#lines + 1] = "|cffffd100Total|r  " .. Money(cheapest)
 	end
 	return table.concat(lines, "\n")
 end
@@ -1186,15 +1177,22 @@ local function PlaceRow(index, entry, y)
 	row.icon:SetTexture(entry.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
 	row.name:SetText(QualityPrefix(entry.link) .. entry.name .. "|r" .. (entry.rank and (" |cffc9b27c(" .. entry.rank .. ")|r") or ""))
 	local missing = entry.kind == "writ" and WritMissing(entry)
+	local total = CheapestTotal(entry)
+	local totalText
 	if missing then
+		totalText = "|cffff4040Total: missing|r"
+	elseif total then
+		totalText = "|cffffd100Total:|r " .. Money(total)
+	end
+	row.name:ClearAllPoints()
+	row.name:SetPoint("TOPLEFT", 38, -4)
+	if totalText then
+		row.flag:SetText(totalText)
 		row.flag:Show()
-		row.name:ClearAllPoints()
-		row.name:SetPoint("TOPLEFT", 38, -4)
-		row.name:SetPoint("RIGHT", row.flag, "LEFT", -6, 0)
+		row.flag:SetAlpha(1)
+		row.name:SetPoint("RIGHT", row.flag, "LEFT", -8, 0)
 	else
 		row.flag:Hide()
-		row.name:ClearAllPoints()
-		row.name:SetPoint("TOPLEFT", 38, -4)
 		row.name:SetPoint("RIGHT", row.count, "LEFT", -6, 0)
 	end
 	local owned = (entry.count or 0) > 0
