@@ -45,7 +45,10 @@ local function EnsureDB()
 	if WowBoxDB.tab ~= "writs" and WowBoxDB.tab ~= "crates" then
 		WowBoxDB.tab = "crates"
 	end
-	if WowBoxDB.sort ~= "price" then
+	if WowBoxDB.sort == "price" then
+		WowBoxDB.sort = "total"
+	end
+	if WowBoxDB.sort ~= "item" and WowBoxDB.sort ~= "materials" and WowBoxDB.sort ~= "total" then
 		WowBoxDB.sort = "default"
 	end
 	if WowBoxDB.writFilter ~= "available" and WowBoxDB.writFilter ~= "missing" then
@@ -735,32 +738,41 @@ function ApplySort()
 		end
 		return db
 	end
-	local function cost(entry)
-		local best
+	local function materialCost(entry)
 		if entry.kind == "writ" then
-			best = unitPrice(entry.searchName)
-		else
-			local reagents = entry.reagents or {}
-			for i = 1, #reagents do
-				local unit = unitPrice(reagents[i].name)
-				if unit then
-					local total = unit * (reagents[i].qty or 1)
-					if not best or total < best then
-						best = total
-					end
+			return unitPrice(entry.searchName)
+		end
+		local best
+		local reagents = entry.reagents or {}
+		for i = 1, #reagents do
+			local unit = unitPrice(reagents[i].name)
+			if unit then
+				local total = unit * (reagents[i].qty or 1)
+				if not best or total < best then
+					best = total
 				end
 			end
 		end
+		return best
+	end
+	local function priceOf(entry)
 		local own = unitPrice(entry.name)
-		if best and own then
-			return best + own
+		if mode == "item" then
+			return own
 		end
-		return best or own
+		local materials = materialCost(entry)
+		if mode == "materials" then
+			return materials
+		end
+		if own and materials then
+			return own + materials
+		end
+		return own or materials
 	end
 	local function cmp(a, b)
-		if mode == "price" then
-			local aPrice = cost(a)
-			local bPrice = cost(b)
+		if mode ~= "default" then
+			local aPrice = priceOf(a)
+			local bPrice = priceOf(b)
 			if aPrice and bPrice and aPrice ~= bPrice then
 				return aPrice < bPrice
 			end
@@ -997,6 +1009,19 @@ local function FilterLabel(mode)
 		return "Missing"
 	end
 	return "All"
+end
+
+local function SortLabel(mode)
+	if mode == "item" then
+		return view == "writs" and "Writ" or "Crate"
+	end
+	if mode == "materials" then
+		return "Materials"
+	end
+	if mode == "total" then
+		return "Total"
+	end
+	return "Default"
 end
 
 local function AuctionHouseOpen()
@@ -1317,6 +1342,9 @@ local function ShowTab(which)
 	view = which
 	EnsureDB()
 	WowBoxDB.tab = which
+	if frame and frame.sortDrop then
+		UIDropDownMenu_SetText(frame.sortDrop, SortLabel(WowBoxDB.sort))
+	end
 	if frame and frame.cratesButton then
 		if which == "crates" then
 			frame.cratesButton:LockHighlight()
@@ -1460,19 +1488,14 @@ local function BuildFrame()
 	end)
 	frame.writsButton = writsButton
 
+	local sortDrop
 	local function ShowSort(mode)
-		if mode ~= "price" then
+		if mode ~= "item" and mode ~= "materials" and mode ~= "total" then
 			mode = "default"
 		end
 		EnsureDB()
 		WowBoxDB.sort = mode
-		if mode == "price" then
-			frame.priceButton:LockHighlight()
-			frame.defaultButton:UnlockHighlight()
-		else
-			frame.defaultButton:LockHighlight()
-			frame.priceButton:UnlockHighlight()
-		end
+		UIDropDownMenu_SetText(sortDrop, SortLabel(mode))
 		ApplySort()
 		if frame.scroll then
 			frame.scroll:SetVerticalScroll(0)
@@ -1482,23 +1505,24 @@ local function BuildFrame()
 		end
 	end
 
-	local priceButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-	priceButton:SetSize(80, 22)
-	priceButton:SetPoint("TOPRIGHT", -36, -38)
-	priceButton:SetText("Price")
-	priceButton:SetScript("OnClick", function()
-		ShowSort("price")
+	sortDrop = CreateFrame("Frame", "WowBoxSortDrop", frame, "UIDropDownMenuTemplate")
+	sortDrop:SetPoint("TOPRIGHT", -16, -32)
+	frame.sortDrop = sortDrop
+	UIDropDownMenu_SetWidth(sortDrop, 110)
+	UIDropDownMenu_JustifyText(sortDrop, "LEFT")
+	UIDropDownMenu_Initialize(sortDrop, function()
+		local modes = { "default", "item", "materials", "total" }
+		for i = 1, #modes do
+			local mode = modes[i]
+			local info = UIDropDownMenu_CreateInfo()
+			info.text = SortLabel(mode)
+			info.checked = WowBoxDB.sort == mode
+			info.func = function()
+				ShowSort(mode)
+			end
+			UIDropDownMenu_AddButton(info)
+		end
 	end)
-	frame.priceButton = priceButton
-
-	local defaultButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-	defaultButton:SetSize(80, 22)
-	defaultButton:SetPoint("RIGHT", priceButton, "LEFT", -8, 0)
-	defaultButton:SetText("Default")
-	defaultButton:SetScript("OnClick", function()
-		ShowSort("default")
-	end)
-	frame.defaultButton = defaultButton
 	ShowSort(WowBoxDB.sort)
 
 	local scroll = CreateFrame("ScrollFrame", "WowBoxScrollFrame", frame, "UIPanelScrollFrameTemplate")
