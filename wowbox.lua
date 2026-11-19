@@ -477,6 +477,251 @@ local function Sanitize(terms)
 	return clean
 end
 
+local Render
+local prices = {}
+local pendingTerms = {}
+local lastResults
+local searchGen = 0
+local priceListener
+
+local function Money(copper)
+	copper = math.floor(copper or 0)
+	if copper <= 0 then
+		return "|cff9a9080none|r"
+	end
+	if GetCoinTextureString then
+		return GetCoinTextureString(copper)
+	end
+	local gold = math.floor(copper / 10000)
+	local silver = math.floor((copper % 10000) / 100)
+	local copperLeft = copper % 100
+	local parts = {}
+	if gold > 0 then
+		parts[#parts + 1] = gold .. "g"
+	end
+	if silver > 0 or gold > 0 then
+		parts[#parts + 1] = silver .. "s"
+	end
+	parts[#parts + 1] = copperLeft .. "c"
+	return table.concat(parts, " ")
+end
+
+local function CleanName(name)
+	if type(name) ~= "string" then
+		return nil
+	end
+	name = name:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+	name = Trim(name)
+	if name == "" then
+		return nil
+	end
+	return name
+end
+
+local function NameFromItemKey(itemKey)
+	if type(itemKey) ~= "table" then
+		return nil
+	end
+	if C_AuctionHouse and C_AuctionHouse.GetItemKeyInfo then
+		local ok, info = pcall(C_AuctionHouse.GetItemKeyInfo, itemKey)
+		if ok and type(info) == "table" then
+			local name = CleanName(info.itemName)
+			if name then
+				return name
+			end
+		end
+	end
+	local itemID = itemKey.itemID or itemKey.itemId
+	if itemID and C_Item and C_Item.GetItemNameByID then
+		local ok, name = pcall(C_Item.GetItemNameByID, itemID)
+		if ok then
+			name = CleanName(name)
+			if name then
+				return name
+			end
+		end
+	end
+	if itemID and GetItemInfo then
+		local name = CleanName(GetItemInfo(itemID))
+		if name then
+			return name
+		end
+	end
+	return nil
+end
+
+local function NameFromResult(row)
+	local name = CleanName(row.name) or CleanName(row.itemName)
+	if name then
+		return name
+	end
+	if type(row.itemLink) == "string" then
+		name = CleanName(row.itemLink:match("%[(.-)%]"))
+		if name then
+			return name
+		end
+	end
+	return NameFromItemKey(row.itemKey)
+end
+
+local function Ingest(results)
+	if type(results) ~= "table" then
+		return
+	end
+	local changed = false
+	local function take(row)
+		if type(row) ~= "table" then
+			return
+		end
+		local price = row.minPrice
+		if type(price) ~= "number" then
+			price = row.price or row.buyoutPrice
+		end
+		if type(price) ~= "number" then
+			return
+		end
+		if type(row.stackSize) == "number" and row.stackSize > 1 and row.buyoutPrice == price then
+			price = math.floor(price / row.stackSize)
+		end
+		local name = NameFromResult(row)
+		if not name then
+			if row.itemKey and not row.wbWait and Auctionator and Auctionator.AH and Auctionator.AH.GetItemKeyInfo then
+				row.wbWait = true
+				pcall(Auctionator.AH.GetItemKeyInfo, row.itemKey, function()
+					pcall(Ingest, { row })
+				end)
+			end
+			return
+		end
+		local key = name:lower()
+		local missing = row.totalQuantity == 0 or row.noneAvailable or price <= 0
+		local value = missing and false or price
+		local prev = prices[key]
+		if value == false then
+			if prev == nil then
+				prices[key] = false
+				pendingTerms[key] = nil
+				changed = true
+			end
+		elseif prev == nil or prev == false or value < prev then
+			prices[key] = value
+			pendingTerms[key] = nil
+			changed = true
+		else
+			pendingTerms[key] = nil
+		end
+	end
+	if results[0] ~= nil then
+		take(results[0])
+	end
+	for i = 1, #results do
+		take(results[i])
+	end
+	if changed and frame and frame:IsShown() then
+		Render()
+	end
+end
+
+local function EnsurePriceListener()
+	if priceListener then
+		return
+	end
+	local bus = Auctionator and Auctionator.EventBus
+	local events = Auctionator and Auctionator.ShoppingLists and Auctionator.ShoppingLists.Events
+	if not bus or not events or not events.ListSearchEnded then
+		return
+	end
+	local listener = {}
+	function listener:ReceiveEvent(eventName, results)
+		if eventName ~= events.ListSearchEnded and eventName ~= events.ListSearchIncrementalUpdate then
+			return
+		end
+		lastResults = results
+		pcall(Ingest, results)
+	end
+	local ok = pcall(bus.Register, bus, listener, {
+		events.ListSearchEnded,
+		events.ListSearchIncrementalUpdate,
+	})
+	if ok then
+		priceListener = listener
+	end
+end
+
+local function FinishPrices(gen)
+	if gen ~= searchGen then
+		return
+	end
+	if lastResults then
+		pcall(Ingest, lastResults)
+	end
+	local leftover = {}
+	for key in pairs(pendingTerms) do
+		leftover[#leftover + 1] = key
+	end
+	local changed = false
+	for i = 1, #leftover do
+		if prices[leftover[i]] == nil then
+			prices[leftover[i]] = false
+			changed = true
+		end
+	end
+	pendingTerms = {}
+	if changed and frame and frame:IsShown() then
+		Render()
+	end
+end
+
+local function BeginPriceSearch(terms)
+	searchGen = searchGen + 1
+	local gen = searchGen
+	pendingTerms = {}
+	lastResults = nil
+	for i = 1, #terms do
+		local key = terms[i]:lower()
+		pendingTerms[key] = true
+		prices[key] = nil
+	end
+	EnsurePriceListener()
+	if frame and frame:IsShown() then
+		Render()
+	end
+	if not C_Timer or not C_Timer.After then
+		return
+	end
+	C_Timer.After(0.6, function()
+		if gen == searchGen and lastResults then
+			pcall(Ingest, lastResults)
+		end
+	end)
+	C_Timer.After(1.5, function()
+		if gen == searchGen and lastResults then
+			pcall(Ingest, lastResults)
+		end
+	end)
+	C_Timer.After(3, function()
+		FinishPrices(gen)
+	end)
+end
+
+local function PriceSuffix(name, qty)
+	if type(name) ~= "string" then
+		return ""
+	end
+	local key = name:lower()
+	local value = prices[key]
+	if value == nil then
+		if pendingTerms[key] then
+			return "   |cff9a9080...|r"
+		end
+		return ""
+	end
+	if value == false then
+		return "   |cff9a9080none|r"
+	end
+	return "   " .. Money(value * (qty or 1))
+end
+
 local function AuctionHouseOpen()
 	if AuctionHouseFrame and AuctionHouseFrame.IsShown and AuctionHouseFrame:IsShown() then
 		return "modern"
@@ -503,6 +748,7 @@ local function SearchTerms(terms, label)
 		local fn = exact or loose
 		local ok, err = pcall(fn, ADDON, terms)
 		if ok then
+			BeginPriceSearch(terms)
 			Print("Shopping list: " .. table.concat(terms, ", "))
 		else
 			Print("Auctionator refused the search. " .. tostring(err))
@@ -513,6 +759,7 @@ local function SearchTerms(terms, label)
 	if type(Atr_SearchAH) == "function" and house then
 		local ok, err = pcall(Atr_SearchAH, "WowBox", terms)
 		if ok then
+			BeginPriceSearch(terms)
 			Print("Shopping list: " .. table.concat(terms, ", "))
 		else
 			Print("Auctionator refused the search. " .. tostring(err))
@@ -584,6 +831,7 @@ local function TakeRow(index)
 	row.detail:SetWidth(ROW_WIDTH - 48)
 	row.detail:SetJustifyH("LEFT")
 	row.detail:SetJustifyV("TOP")
+	row.detail:SetWordWrap(false)
 	if row.detail.SetSpacing then
 		row.detail:SetSpacing(2)
 	end
@@ -626,7 +874,12 @@ end
 local function DetailText(entry)
 	if entry.kind == "writ" then
 		if entry.searchName then
-			return "Search  |cffffffff" .. entry.searchName .. "|r"
+			local writPrice = PriceSuffix(entry.name, 1)
+			local text = string.format("|cffffffff1|r  %s%s", entry.searchName, PriceSuffix(entry.searchName, 1))
+			if writPrice ~= "" then
+				text = text .. "\nWrit" .. writPrice
+			end
+			return text
 		end
 		return "|cffff8080Could not read the writ item.|r"
 	end
@@ -637,7 +890,11 @@ local function DetailText(entry)
 	local lines = {}
 	for i = 1, #reagents do
 		local reagent = reagents[i]
-		lines[i] = string.format("|cffffffff%d|r  %s", reagent.qty, reagent.name)
+		lines[i] = string.format("|cffffffff%d|r  %s%s", reagent.qty, reagent.name, PriceSuffix(reagent.name, reagent.qty))
+	end
+	local cratePrice = PriceSuffix(entry.name, 1)
+	if cratePrice ~= "" then
+		lines[#lines + 1] = "Crate" .. cratePrice
 	end
 	return table.concat(lines, "\n")
 end
@@ -684,7 +941,7 @@ local function PlaceRow(index, entry, y)
 	return y - height - 4
 end
 
-local function Render()
+function Render()
 	if not frame then
 		return
 	end
@@ -961,6 +1218,9 @@ events:SetScript("OnEvent", function(_, event, arg1)
 		EnsureDB()
 		BuildFrame()
 		ShowTab(WowBoxDB.tab)
+		EnsurePriceListener()
+	elseif event == "ADDON_LOADED" and arg1 == "Auctionator" then
+		EnsurePriceListener()
 	elseif event == "BAG_UPDATE" then
 		QueueScan()
 	elseif event == "AUCTION_HOUSE_SHOW" then

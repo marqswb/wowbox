@@ -2,7 +2,7 @@
 ## Title: WowBox
 ## Notes: Every Waylaid Crate and Craftsman's Writ, with bag counts, searched through Auctionator.
 ## Author: marqswb
-## Version: 1.2.0
+## Version: 1.3.0
 ## SavedVariables: WowBoxDB
 ## OptionalDeps: Auctionator
 ## Category: Auction & Economy
