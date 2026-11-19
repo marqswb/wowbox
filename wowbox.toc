@@ -1,0 +1,9 @@
+## Interface: 16001
+## Interface-Camelot: 16001
+## Title: WowBox
+## Notes: WoW Forever addon.
+## Author: marqswb
+## Version: 0.1.0
+## SavedVariables: WowBoxDB
+
+wowbox.lua
