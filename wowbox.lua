@@ -373,13 +373,34 @@ local function SortEntries(list)
 	end)
 end
 
+local function LinkForName(name, link)
+	if type(link) == "string" and link ~= "" then
+		return link
+	end
+	local ids = WowBoxData and WowBoxData.ids
+	local itemID = type(name) == "string" and ids and ids[name:lower()]
+	if not itemID then
+		return nil
+	end
+	if GetItemInfo then
+		local _, itemLink = GetItemInfo(itemID)
+		if type(itemLink) == "string" then
+			return itemLink
+		end
+	end
+	if C_Item and C_Item.RequestLoadItemDataByID then
+		C_Item.RequestLoadItemDataByID(itemID)
+	end
+	return "item:" .. itemID
+end
+
 local function MakeEntry(kind, name, count, icon, link)
 	return {
 		kind = kind,
 		name = name,
 		count = count or 0,
 		icon = icon,
-		link = link,
+		link = LinkForName(name, link),
 		reagents = nil,
 		searchName = nil,
 	}
@@ -1111,11 +1132,26 @@ local function TakeRow(index)
 		SearchEntry(self.entry)
 	end)
 	row:SetScript("OnEnter", function(self)
-		if not self.link then
+		local link = self.link
+		if self.entry and (type(link) ~= "string" or not link:find("|H", 1, true)) then
+			local better = LinkForName(self.entry.name, nil)
+			if type(better) == "string" then
+				link = better
+				self.link = better
+				self.entry.link = better
+			end
+		end
+		if not link then
 			return
 		end
 		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-		local ok = pcall(GameTooltip.SetHyperlink, GameTooltip, self.link)
+		local ok = pcall(GameTooltip.SetHyperlink, GameTooltip, link)
+		if not ok and GameTooltip.SetItemByID then
+			local itemID = tonumber(tostring(link):match("item:(%d+)"))
+			if itemID then
+				ok = pcall(GameTooltip.SetItemByID, GameTooltip, itemID)
+			end
+		end
 		if ok then
 			GameTooltip:AddLine(" ")
 			GameTooltip:AddLine("Click to search these in Auctionator.", 1, 0.82, 0)
