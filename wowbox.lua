@@ -12,6 +12,7 @@ local crates = {}
 local writs = {}
 local rowPool = {}
 local headerPool = {}
+local view = "crates"
 local scanQueued = false
 
 local frame
@@ -40,6 +41,9 @@ local function EnsureDB()
 	end
 	if WowBoxDB.autoOpen == nil then
 		WowBoxDB.autoOpen = true
+	end
+	if WowBoxDB.tab ~= "writs" and WowBoxDB.tab ~= "crates" then
+		WowBoxDB.tab = "crates"
 	end
 end
 
@@ -690,39 +694,50 @@ local function Render()
 	local y = -4
 	local headerIndex = 0
 	local rowIndex = 0
+	local entries = view == "writs" and writs or crates
 
-	local function Section(title, entries)
+	if #entries == 0 then
 		headerIndex = headerIndex + 1
-		y = PlaceHeader(headerIndex, title, y)
-		if #entries == 0 then
-			headerIndex = headerIndex + 1
-			y = PlaceHeader(headerIndex, "|cffb0a890None listed.|r", y)
-			return
-		end
+		y = PlaceHeader(headerIndex, "|cffb0a890None listed.|r", y)
+	else
 		for i = 1, #entries do
 			rowIndex = rowIndex + 1
 			y = PlaceRow(rowIndex, entries[i], y)
 		end
-		y = y - 8
 	end
-
-	Section("Waylaid Crates", crates)
-	Section("Craftsman's Writs", writs)
 
 	frame.content:SetSize(ROW_WIDTH, math.max(1, -y))
 	local owned = 0
-	for i = 1, #crates do
-		if crates[i].count > 0 then
+	for i = 1, #entries do
+		if entries[i].count > 0 then
 			owned = owned + 1
 		end
 	end
-	for i = 1, #writs do
-		if writs[i].count > 0 then
-			owned = owned + 1
+	frame.status:SetText(owned .. " in your bags. " .. #entries .. " total.")
+end
+
+local function ShowTab(which)
+	if which ~= "writs" then
+		which = "crates"
+	end
+	view = which
+	EnsureDB()
+	WowBoxDB.tab = which
+	if frame and frame.cratesButton then
+		if which == "crates" then
+			frame.cratesButton:LockHighlight()
+			frame.writsButton:UnlockHighlight()
+		else
+			frame.writsButton:LockHighlight()
+			frame.cratesButton:UnlockHighlight()
 		end
 	end
-	local total = #crates + #writs
-	frame.status:SetText(owned .. " in your bags. " .. total .. " total.")
+	if frame and frame.scroll then
+		frame.scroll:SetVerticalScroll(0)
+	end
+	if frame and frame:IsShown() then
+		Render()
+	end
 end
 
 local function Refresh()
@@ -817,14 +832,26 @@ local function BuildFrame()
 	title:SetPoint("TOP", 0, -14)
 	title:SetText("WowBox")
 
-	local hint = frame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-	hint:SetPoint("TOPLEFT", 16, -38)
-	hint:SetPoint("TOPRIGHT", -16, -38)
-	hint:SetJustifyH("LEFT")
-	hint:SetText("Every crate and writ in the game. x0 is not in your bags. Click to search that item and what it needs.")
+	local cratesButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	cratesButton:SetSize(120, 22)
+	cratesButton:SetPoint("TOPLEFT", 16, -38)
+	cratesButton:SetText("Crates")
+	cratesButton:SetScript("OnClick", function()
+		ShowTab("crates")
+	end)
+	frame.cratesButton = cratesButton
+
+	local writsButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	writsButton:SetSize(120, 22)
+	writsButton:SetPoint("LEFT", cratesButton, "RIGHT", 8, 0)
+	writsButton:SetText("Writs")
+	writsButton:SetScript("OnClick", function()
+		ShowTab("writs")
+	end)
+	frame.writsButton = writsButton
 
 	local scroll = CreateFrame("ScrollFrame", "WowBoxScrollFrame", frame, "UIPanelScrollFrameTemplate")
-	scroll:SetPoint("TOPLEFT", 14, -78)
+	scroll:SetPoint("TOPLEFT", 14, -68)
 	scroll:SetPoint("BOTTOMRIGHT", -32, 40)
 	frame.scroll = scroll
 
@@ -858,6 +885,8 @@ local function BuildFrame()
 
 	frame:SetScript("OnShow", function()
 		RestorePosition()
+		EnsureDB()
+		ShowTab(WowBoxDB.tab)
 		Refresh()
 	end)
 
@@ -926,10 +955,12 @@ local events = CreateFrame("Frame")
 events:RegisterEvent("ADDON_LOADED")
 events:RegisterEvent("BAG_UPDATE")
 events:RegisterEvent("AUCTION_HOUSE_SHOW")
+events:RegisterEvent("AUCTION_HOUSE_CLOSED")
 events:SetScript("OnEvent", function(_, event, arg1)
 	if event == "ADDON_LOADED" and arg1 == ADDON then
 		EnsureDB()
 		BuildFrame()
+		ShowTab(WowBoxDB.tab)
 	elseif event == "BAG_UPDATE" then
 		QueueScan()
 	elseif event == "AUCTION_HOUSE_SHOW" then
@@ -938,6 +969,10 @@ events:SetScript("OnEvent", function(_, event, arg1)
 			ShowFrame()
 		elseif frame and frame:IsShown() then
 			Refresh()
+		end
+	elseif event == "AUCTION_HOUSE_CLOSED" then
+		if frame then
+			frame:Hide()
 		end
 	end
 end)
