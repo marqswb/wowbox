@@ -480,6 +480,7 @@ end
 local Render
 local prices = {}
 local pendingTerms = {}
+local termNames = {}
 local lastResults
 local searchGen = 0
 local priceListener
@@ -584,31 +585,15 @@ local function Ingest(results)
 			price = math.floor(price / row.stackSize)
 		end
 		local name = NameFromResult(row)
-		if not name then
-			if row.itemKey and not row.wbWait and Auctionator and Auctionator.AH and Auctionator.AH.GetItemKeyInfo then
-				row.wbWait = true
-				pcall(Auctionator.AH.GetItemKeyInfo, row.itemKey, function()
-					pcall(Ingest, { row })
-				end)
-			end
+		if not name or type(price) ~= "number" or price <= 0 then
 			return
 		end
 		local key = name:lower()
-		local missing = row.totalQuantity == 0 or row.noneAvailable or price <= 0
-		local value = missing and false or price
 		local prev = prices[key]
-		if value == false then
-			if prev == nil then
-				prices[key] = false
-				pendingTerms[key] = nil
-				changed = true
-			end
-		elseif prev == nil or prev == false or value < prev then
-			prices[key] = value
+		if prev == nil or prev == false or price < prev then
+			prices[key] = price
 			pendingTerms[key] = nil
 			changed = true
-		else
-			pendingTerms[key] = nil
 		end
 	end
 	if results[0] ~= nil then
@@ -616,6 +601,82 @@ local function Ingest(results)
 	end
 	for i = 1, #results do
 		take(results[i])
+	end
+	if changed and frame and frame:IsShown() then
+		Render()
+	end
+end
+
+local function DatabasePrice(name)
+	local api = Auctionator and Auctionator.API and Auctionator.API.v1
+	if not api or type(name) ~= "string" then
+		return nil
+	end
+	local link
+	if GetItemInfo then
+		link = select(2, GetItemInfo(name))
+	end
+	if not link and C_Item and C_Item.GetItemInfo then
+		local info = C_Item.GetItemInfo(name)
+		if type(info) == "table" then
+			link = info.itemLink or info.hyperlink
+		end
+	end
+	local itemID = link and tonumber(link:match("item:(%d+)"))
+	if itemID and api.GetAuctionPriceByItemID then
+		local ok, price = pcall(api.GetAuctionPriceByItemID, "WowBox", itemID)
+		if ok and type(price) == "number" and price > 0 then
+			return price
+		end
+	end
+	if link and api.GetAuctionPriceByItemLink then
+		local ok, price = pcall(api.GetAuctionPriceByItemLink, "WowBox", link)
+		if ok and type(price) == "number" and price > 0 then
+			return price
+		end
+	end
+	return nil
+end
+
+local function ShoppingRows()
+	local list = _G.AuctionatorShoppingListFrame
+	if not list and AuctionHouseFrame then
+		list = AuctionHouseFrame.AuctionatorShoppingListFrame
+	end
+	local provider = list and (list.DataProvider or (list.ResultsListing and list.ResultsListing.dataProvider))
+	if not provider and EnumerateFrames then
+		local current = EnumerateFrames()
+		while current do
+			if current.ResultsListing and current.DataProvider and current.DataProvider.results then
+				provider = current.DataProvider
+				break
+			end
+			current = EnumerateFrames(current)
+		end
+	end
+	if provider and type(provider.results) == "table" then
+		return provider.results
+	end
+	return nil
+end
+
+local function RefreshPrices()
+	local rows = ShoppingRows()
+	if rows then
+		pcall(Ingest, rows)
+	elseif lastResults then
+		pcall(Ingest, lastResults)
+	end
+	local changed = false
+	for key, name in pairs(termNames) do
+		if prices[key] == nil then
+			local price = DatabasePrice(name)
+			if price then
+				prices[key] = price
+				pendingTerms[key] = nil
+				changed = true
+			end
+		end
 	end
 	if changed and frame and frame:IsShown() then
 		Render()
@@ -637,7 +698,7 @@ local function EnsurePriceListener()
 			return
 		end
 		lastResults = results
-		pcall(Ingest, results)
+		pcall(RefreshPrices)
 	end
 	local ok = pcall(bus.Register, bus, listener, {
 		events.ListSearchEnded,
@@ -652,9 +713,7 @@ local function FinishPrices(gen)
 	if gen ~= searchGen then
 		return
 	end
-	if lastResults then
-		pcall(Ingest, lastResults)
-	end
+	pcall(RefreshPrices)
 	local leftover = {}
 	for key in pairs(pendingTerms) do
 		leftover[#leftover + 1] = key
@@ -676,32 +735,39 @@ local function BeginPriceSearch(terms)
 	searchGen = searchGen + 1
 	local gen = searchGen
 	pendingTerms = {}
+	termNames = {}
 	lastResults = nil
 	for i = 1, #terms do
 		local key = terms[i]:lower()
 		pendingTerms[key] = true
+		termNames[key] = terms[i]
 		prices[key] = nil
 	end
 	EnsurePriceListener()
+	pcall(RefreshPrices)
 	if frame and frame:IsShown() then
 		Render()
 	end
 	if not C_Timer or not C_Timer.After then
 		return
 	end
-	C_Timer.After(0.6, function()
-		if gen == searchGen and lastResults then
-			pcall(Ingest, lastResults)
-		end
-	end)
-	C_Timer.After(1.5, function()
-		if gen == searchGen and lastResults then
-			pcall(Ingest, lastResults)
-		end
-	end)
-	C_Timer.After(3, function()
-		FinishPrices(gen)
-	end)
+	local function later(delay, finish)
+		C_Timer.After(delay, function()
+			if gen ~= searchGen then
+				return
+			end
+			if finish then
+				FinishPrices(gen)
+			else
+				pcall(RefreshPrices)
+			end
+		end)
+	end
+	later(0.4, false)
+	later(1.2, false)
+	later(2.5, false)
+	later(4.5, false)
+	later(6, true)
 end
 
 local function PriceSuffix(name, qty)
@@ -831,7 +897,7 @@ local function TakeRow(index)
 	row.detail:SetWidth(ROW_WIDTH - 48)
 	row.detail:SetJustifyH("LEFT")
 	row.detail:SetJustifyV("TOP")
-	row.detail:SetWordWrap(false)
+	row.detail:SetWordWrap(true)
 	if row.detail.SetSpacing then
 		row.detail:SetSpacing(2)
 	end
@@ -928,6 +994,9 @@ local function PlaceRow(index, entry, y)
 		row.icon:SetAlpha(0.45)
 	end
 	local detail = DetailText(entry)
+	if row.detail.SetWordWrap then
+		row.detail:SetWordWrap(true)
+	end
 	row.detail:SetText(detail)
 	local reagentCount = 1
 	for _ in detail:gmatch("\n") do
