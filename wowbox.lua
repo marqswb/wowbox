@@ -755,39 +755,39 @@ function ApplySort()
 		end
 		return best
 	end
-	local function priceOf(entry)
+	local function sortKey(entry)
+		if mode == "default" then
+			return (entry.count or 0) > 0 and 0 or 1, 0
+		end
 		local own = unitPrice(entry.name)
-		if mode == "item" then
-			return own
-		end
 		local materials = materialCost(entry)
-		if mode == "materials" then
-			return materials
+		local price
+		if mode == "item" then
+			price = own
+		elseif mode == "materials" then
+			price = materials
+		elseif entry.kind == "writ" then
+			if own and materials then
+				price = own + materials
+			end
+		elseif own and materials then
+			price = own + materials
+		else
+			price = own or materials
 		end
-		if own and materials then
-			return own + materials
+		if type(price) ~= "number" or price <= 0 then
+			return 1, 0
 		end
-		return own or materials
+		return 0, price
 	end
 	local function cmp(a, b)
-		if mode ~= "default" then
-			local aPrice = priceOf(a)
-			local bPrice = priceOf(b)
-			if aPrice and bPrice and aPrice ~= bPrice then
-				return aPrice < bPrice
-			end
-			if aPrice and not bPrice then
-				return true
-			end
-			if bPrice and not aPrice then
-				return false
-			end
-		else
-			local aOwned = (a.count or 0) > 0
-			local bOwned = (b.count or 0) > 0
-			if aOwned ~= bOwned then
-				return aOwned
-			end
+		local aGroup, aPrice = sortKey(a)
+		local bGroup, bPrice = sortKey(b)
+		if aGroup ~= bGroup then
+			return aGroup < bGroup
+		end
+		if aGroup == 0 and mode ~= "default" and aPrice ~= bPrice then
+			return aPrice < bPrice
 		end
 		return a.name < b.name
 	end
