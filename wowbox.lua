@@ -45,6 +45,9 @@ local function EnsureDB()
 	if WowBoxDB.tab ~= "writs" and WowBoxDB.tab ~= "crates" then
 		WowBoxDB.tab = "crates"
 	end
+	if WowBoxDB.sort ~= "price" then
+		WowBoxDB.sort = "default"
+	end
 end
 
 local function NormalizeBullets(text)
@@ -405,11 +408,17 @@ local function BuildEntries()
 	if type(data) == "table" and type(data.writs) == "table" then
 		for i = 1, #data.writs do
 			local item = data.writs[i]
+			local rank
+			if type(item) == "table" then
+				rank = item[2]
+				item = item[1]
+			end
 			local name = "Craftsman's Writ: " .. item
 			local key = name:lower()
 			seen[key] = true
 			local entry = MakeEntry("writ", name, counts[key], icons[key], links[key])
 			entry.searchName = item
+			entry.rank = rank
 			writs[#writs + 1] = entry
 		end
 	end
@@ -430,8 +439,7 @@ local function BuildEntries()
 		end
 	end
 
-	SortEntries(crates)
-	SortEntries(writs)
+	ApplySort()
 end
 
 local function TermsFor(entry)
@@ -636,6 +644,66 @@ local function DatabasePrice(name)
 		end
 	end
 	return nil
+end
+
+function ApplySort()
+	EnsureDB()
+	local mode = WowBoxDB.sort
+	local function unitPrice(name)
+		if type(name) ~= "string" then
+			return nil
+		end
+		local cached = prices[name:lower()]
+		if type(cached) == "number" and cached > 0 then
+			return cached
+		end
+		local db = DatabasePrice(name)
+		if db then
+			prices[name:lower()] = db
+		end
+		return db
+	end
+	local function cost(entry)
+		if entry.kind == "writ" then
+			return unitPrice(entry.searchName)
+		end
+		local best
+		local reagents = entry.reagents or {}
+		for i = 1, #reagents do
+			local unit = unitPrice(reagents[i].name)
+			if unit then
+				local total = unit * (reagents[i].qty or 1)
+				if not best or total < best then
+					best = total
+				end
+			end
+		end
+		return best or unitPrice(entry.name)
+	end
+	local function cmp(a, b)
+		if mode == "price" then
+			local aPrice = cost(a)
+			local bPrice = cost(b)
+			if aPrice and bPrice and aPrice ~= bPrice then
+				return aPrice < bPrice
+			end
+			if aPrice and not bPrice then
+				return true
+			end
+			if bPrice and not aPrice then
+				return false
+			end
+		else
+			local aOwned = (a.count or 0) > 0
+			local bOwned = (b.count or 0) > 0
+			if aOwned ~= bOwned then
+				return aOwned
+			end
+		end
+		return a.name < b.name
+	end
+	table.sort(crates, cmp)
+	table.sort(writs, cmp)
 end
 
 local function ShoppingRows()
@@ -980,7 +1048,7 @@ local function PlaceRow(index, entry, y)
 	row.link = entry.link
 	row:SetSize(ROW_WIDTH, 40)
 	row.icon:SetTexture(entry.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
-	row.name:SetText(QualityPrefix(entry.link) .. entry.name .. "|r")
+	row.name:SetText(QualityPrefix(entry.link) .. entry.name .. "|r" .. (entry.rank and (" |cffc9b27c(" .. entry.rank .. ")|r") or ""))
 	local owned = (entry.count or 0) > 0
 	if owned then
 		row.count:SetText("|cffffffffx" .. entry.count .. "|r")
@@ -1175,6 +1243,47 @@ local function BuildFrame()
 		ShowTab("writs")
 	end)
 	frame.writsButton = writsButton
+
+	local function ShowSort(mode)
+		if mode ~= "price" then
+			mode = "default"
+		end
+		EnsureDB()
+		WowBoxDB.sort = mode
+		if mode == "price" then
+			frame.priceButton:LockHighlight()
+			frame.defaultButton:UnlockHighlight()
+		else
+			frame.defaultButton:LockHighlight()
+			frame.priceButton:UnlockHighlight()
+		end
+		ApplySort()
+		if frame.scroll then
+			frame.scroll:SetVerticalScroll(0)
+		end
+		if frame:IsShown() then
+			Render()
+		end
+	end
+
+	local priceButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	priceButton:SetSize(80, 22)
+	priceButton:SetPoint("TOPRIGHT", -36, -38)
+	priceButton:SetText("Price")
+	priceButton:SetScript("OnClick", function()
+		ShowSort("price")
+	end)
+	frame.priceButton = priceButton
+
+	local defaultButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+	defaultButton:SetSize(80, 22)
+	defaultButton:SetPoint("RIGHT", priceButton, "LEFT", -8, 0)
+	defaultButton:SetText("Default")
+	defaultButton:SetScript("OnClick", function()
+		ShowSort("default")
+	end)
+	frame.defaultButton = defaultButton
+	ShowSort(WowBoxDB.sort)
 
 	local scroll = CreateFrame("ScrollFrame", "WowBoxScrollFrame", frame, "UIPanelScrollFrameTemplate")
 	scroll:SetPoint("TOPLEFT", 14, -68)
