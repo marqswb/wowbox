@@ -439,6 +439,7 @@ local function BuildEntries()
 		end
 	end
 
+	LoadSavedPrices()
 	ApplySort()
 end
 
@@ -617,33 +618,79 @@ end
 
 local function DatabasePrice(name)
 	local api = Auctionator and Auctionator.API and Auctionator.API.v1
-	if not api or type(name) ~= "string" then
+	local db = Auctionator and Auctionator.Database
+	if (not api and not db) or type(name) ~= "string" then
 		return nil
 	end
+	local ids = WowBoxData and WowBoxData.ids
+	local itemID = ids and ids[name:lower()]
 	local link
-	if GetItemInfo then
+	if not itemID and GetItemInfo then
 		link = select(2, GetItemInfo(name))
+		itemID = link and tonumber(link:match("item:(%d+)"))
 	end
-	if not link and C_Item and C_Item.GetItemInfo then
+	if not itemID and C_Item and C_Item.GetItemInfo then
 		local info = C_Item.GetItemInfo(name)
 		if type(info) == "table" then
 			link = info.itemLink or info.hyperlink
+			itemID = info.itemID or (link and tonumber(link:match("item:(%d+)")))
 		end
 	end
-	local itemID = link and tonumber(link:match("item:(%d+)"))
-	if itemID and api.GetAuctionPriceByItemID then
+	if itemID and db and db.GetPrice then
+		local ok, price = pcall(db.GetPrice, db, tostring(itemID))
+		if ok and type(price) == "number" and price > 0 then
+			return price
+		end
+	end
+	if itemID and api and api.GetAuctionPriceByItemID then
 		local ok, price = pcall(api.GetAuctionPriceByItemID, "WowBox", itemID)
 		if ok and type(price) == "number" and price > 0 then
 			return price
 		end
 	end
-	if link and api.GetAuctionPriceByItemLink then
+	if link and api and api.GetAuctionPriceByItemLink then
 		local ok, price = pcall(api.GetAuctionPriceByItemLink, "WowBox", link)
 		if ok and type(price) == "number" and price > 0 then
 			return price
 		end
 	end
 	return nil
+end
+
+function LoadSavedPrices()
+	local data = WowBoxData
+	if type(data) ~= "table" then
+		return
+	end
+	local function note(name)
+		if type(name) ~= "string" then
+			return
+		end
+		local key = name:lower()
+		if type(prices[key]) == "number" and prices[key] > 0 then
+			return
+		end
+		local price = DatabasePrice(name)
+		if price then
+			prices[key] = price
+		end
+	end
+	local cratesData = data.crates or {}
+	for i = 1, #cratesData do
+		note(cratesData[i][1])
+		local bundles = cratesData[i][2] or {}
+		for j = 1, #bundles do
+			note(bundles[j][2])
+		end
+	end
+	local writsData = data.writs or {}
+	for i = 1, #writsData do
+		local item = writsData[i]
+		if type(item) == "table" then
+			item = item[1]
+		end
+		note(item)
+	end
 end
 
 function ApplySort()
@@ -752,6 +799,19 @@ local function RefreshPrices()
 end
 
 local function EnsurePriceListener()
+	local api = Auctionator and Auctionator.API and Auctionator.API.v1
+	if api and api.RegisterForDBUpdate and not dbHooked then
+		local ok = pcall(api.RegisterForDBUpdate, "WowBox", function()
+			LoadSavedPrices()
+			if frame and frame:IsShown() then
+				ApplySort()
+				Render()
+			end
+		end)
+		if ok then
+			dbHooked = true
+		end
+	end
 	if priceListener then
 		return
 	end
@@ -836,6 +896,32 @@ local function BeginPriceSearch(terms)
 	later(2.5, false)
 	later(4.5, false)
 	later(6, true)
+end
+
+local function LineTotal(name, qty)
+	if type(name) ~= "string" then
+		return nil
+	end
+	local value = prices[name:lower()]
+	if type(value) == "number" and value > 0 then
+		return value * (qty or 1)
+	end
+	return nil
+end
+
+local function CheapestTotal(entry)
+	if entry.kind == "writ" then
+		return LineTotal(entry.searchName, 1)
+	end
+	local best
+	local reagents = entry.reagents or {}
+	for i = 1, #reagents do
+		local total = LineTotal(reagents[i].name, reagents[i].qty)
+		if total and (not best or total < best) then
+			best = total
+		end
+	end
+	return best
 end
 
 local function PriceSuffix(name, qty)
@@ -1013,6 +1099,10 @@ local function DetailText(entry)
 			if writPrice ~= "" then
 				text = text .. "\nWrit" .. writPrice
 			end
+			local cheapest = CheapestTotal(entry)
+			if cheapest then
+				text = text .. "\n|cffffd100Total|r  " .. Money(cheapest)
+			end
 			return text
 		end
 		return "|cffff8080Could not read the writ item.|r"
@@ -1029,6 +1119,10 @@ local function DetailText(entry)
 	local cratePrice = PriceSuffix(entry.name, 1)
 	if cratePrice ~= "" then
 		lines[#lines + 1] = "Crate" .. cratePrice
+	end
+	local cheapest = CheapestTotal(entry)
+	if cheapest then
+		lines[#lines + 1] = "|cffffd100Total|r  " .. Money(cheapest)
 	end
 	return table.concat(lines, "\n")
 end
@@ -1399,6 +1493,10 @@ events:SetScript("OnEvent", function(_, event, arg1)
 		EnsurePriceListener()
 	elseif event == "ADDON_LOADED" and arg1 == "Auctionator" then
 		EnsurePriceListener()
+		LoadSavedPrices()
+		if frame and frame:IsShown() then
+			Refresh()
+		end
 	elseif event == "BAG_UPDATE" then
 		QueueScan()
 	elseif event == "AUCTION_HOUSE_SHOW" then
