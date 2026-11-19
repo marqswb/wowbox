@@ -1300,7 +1300,9 @@ local function ShowTab(which)
 			frame.status:SetPoint("RIGHT", frame, "RIGHT", -16, 0)
 		else
 			frame.writFilter:Hide()
-			CloseDropDownMenus()
+			if CloseDropDownMenus then
+				CloseDropDownMenus()
+			end
 			frame.status:ClearAllPoints()
 			frame.status:SetPoint("LEFT", frame.refresh, "RIGHT", 10, 0)
 			frame.status:SetPoint("RIGHT", frame, "RIGHT", -16, 0)
