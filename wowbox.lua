@@ -1296,13 +1296,11 @@ local function ShowTab(which)
 		if which == "writs" then
 			frame.writFilter:Show()
 			frame.status:ClearAllPoints()
-			frame.status:SetPoint("LEFT", frame.writFilter, "RIGHT", 8, 2)
+			frame.status:SetPoint("LEFT", frame.writFilter, "RIGHT", 4, 3)
 			frame.status:SetPoint("RIGHT", frame, "RIGHT", -16, 0)
 		else
 			frame.writFilter:Hide()
-			if frame.writMenu then
-				frame.writMenu:Hide()
-			end
+			CloseDropDownMenus()
 			frame.status:ClearAllPoints()
 			frame.status:SetPoint("LEFT", frame.refresh, "RIGHT", 10, 0)
 			frame.status:SetPoint("RIGHT", frame, "RIGHT", -16, 0)
@@ -1495,27 +1493,12 @@ local function BuildFrame()
 	refresh:SetScript("OnClick", Refresh)
 	frame.refresh = refresh
 
-	local filter = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-	filter:SetSize(148, 22)
-	filter:SetPoint("LEFT", refresh, "RIGHT", 8, 0)
-	filter:SetText("Show: All")
+	local filter = CreateFrame("Frame", "WowBoxWritFilterDrop", frame, "UIDropDownMenuTemplate")
+	filter:SetPoint("LEFT", refresh, "RIGHT", -6, -3)
 	filter:Hide()
 	frame.writFilter = filter
-
-	local menu = CreateFrame("Frame", nil, filter)
-	menu:SetSize(148, 70)
-	menu:SetPoint("BOTTOMLEFT", filter, "TOPLEFT", 0, 2)
-	menu:SetFrameStrata("DIALOG")
-	menu:Hide()
-	menu:EnableMouse(true)
-	local menuBg = menu:CreateTexture(nil, "BACKGROUND")
-	menuBg:SetColorTexture(0.07, 0.06, 0.05, 1)
-	local menuEdge = menu:CreateTexture(nil, "BORDER")
-	menuEdge:SetAllPoints()
-	menuEdge:SetColorTexture(0.85, 0.7, 0.35, 1)
-	menuBg:SetPoint("TOPLEFT", 1, -1)
-	menuBg:SetPoint("BOTTOMRIGHT", -1, 1)
-	frame.writMenu = menu
+	UIDropDownMenu_SetWidth(filter, 118)
+	UIDropDownMenu_JustifyText(filter, "LEFT")
 
 	local function ApplyFilter(mode)
 		EnsureDB()
@@ -1523,39 +1506,29 @@ local function BuildFrame()
 			mode = "all"
 		end
 		WowBoxDB.writFilter = mode
-		filter:SetText("Show: " .. FilterLabel(mode))
-		menu:Hide()
+		UIDropDownMenu_SetText(filter, "Show: " .. FilterLabel(mode))
 		if frame.scroll then
 			frame.scroll:SetVerticalScroll(0)
 		end
-		if frame:IsShown() then
+		if frame:IsShown() and view == "writs" then
 			Render()
 		end
 	end
 
-	local choices = { "all", "available", "missing" }
-	for i = 1, #choices do
-		local mode = choices[i]
-		local choice = CreateFrame("Button", nil, menu)
-		choice:SetSize(144, 20)
-		choice:SetPoint("TOPLEFT", 2, -2 - (i - 1) * 22)
-		local label = choice:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-		label:SetPoint("LEFT", 8, 0)
-		label:SetText(FilterLabel(mode))
-		choice:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
-		choice:SetScript("OnClick", function()
-			ApplyFilter(mode)
-		end)
-	end
-
-	filter:SetScript("OnClick", function()
-		if menu:IsShown() then
-			menu:Hide()
-		else
-			menu:Show()
+	UIDropDownMenu_Initialize(filter, function()
+		local modes = { "all", "available", "missing" }
+		for i = 1, #modes do
+			local mode = modes[i]
+			local info = UIDropDownMenu_CreateInfo()
+			info.text = FilterLabel(mode)
+			info.checked = WowBoxDB.writFilter == mode
+			info.func = function()
+				ApplyFilter(mode)
+			end
+			UIDropDownMenu_AddButton(info)
 		end
 	end)
-	ApplyFilter(WowBoxDB.writFilter)
+	ApplyFilter(WowBoxDB and WowBoxDB.writFilter or "all")
 
 	local status = frame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
 	status:SetPoint("LEFT", refresh, "RIGHT", 10, 0)
