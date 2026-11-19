@@ -6,7 +6,7 @@
 
 local ADDON = ...
 
-local ROW_WIDTH = 390
+local ROW_WIDTH = 510
 
 local crates = {}
 local writs = {}
@@ -326,7 +326,10 @@ local function FreshEntry(kind, name, link, icon, count, itemID)
 end
 
 local function ScanBags()
-	local found = {}
+	local counts = {}
+	local icons = {}
+	local links = {}
+	local names = {}
 	for _, bag in ipairs(BagList()) do
 		local slots = SlotCount(bag)
 		for slot = 1, slots do
@@ -334,56 +337,120 @@ local function ScanBags()
 			local name = NameFrom(link, itemName)
 			local kind = name and Classify(name)
 			if kind then
-				local key = itemID or name
-				local entry = found[key]
-				if not entry then
-					entry = FreshEntry(kind, name, link, icon, 0, itemID)
-					found[key] = entry
+				local key = name:lower()
+				counts[key] = (counts[key] or 0) + (count or 1)
+				names[key] = name
+				if icon and not icons[key] then
+					icons[key] = icon
 				end
-				entry.count = entry.count + (count or 1)
-				if not entry.bag then
-					entry.bag = bag
-					entry.slot = slot
-					entry.link = entry.link or link
-					entry.icon = entry.icon or icon
+				if link and not links[key] then
+					links[key] = link
 				end
 			end
 		end
 	end
+	return counts, icons, links, names
+end
 
+local function SortEntries(list)
+	table.sort(list, function(a, b)
+		local aOwned = (a.count or 0) > 0
+		local bOwned = (b.count or 0) > 0
+		if aOwned ~= bOwned then
+			return aOwned
+		end
+		return a.name < b.name
+	end)
+end
+
+local function MakeEntry(kind, name, count, icon, link)
+	return {
+		kind = kind,
+		name = name,
+		count = count or 0,
+		icon = icon,
+		link = link,
+		reagents = nil,
+		searchName = nil,
+	}
+end
+
+local function BuildEntries()
+	local counts, icons, links, names = ScanBags()
+	local seen = {}
 	crates = {}
 	writs = {}
-	for _, entry in pairs(found) do
-		entry.lines = TooltipLines(entry.bag, entry.slot, entry.link)
-		if entry.kind == "crate" then
-			entry.reagents = ParseReagents(entry.lines)
+
+	local data = WowBoxData
+	if type(data) == "table" and type(data.crates) == "table" then
+		for i = 1, #data.crates do
+			local row = data.crates[i]
+			local name = row[1]
+			local key = name:lower()
+			seen[key] = true
+			local entry = MakeEntry("crate", name, counts[key], icons[key], links[key])
+			entry.reagents = {}
+			local bundles = row[2] or {}
+			for j = 1, #bundles do
+				entry.reagents[j] = { qty = bundles[j][1], name = bundles[j][2] }
+			end
 			crates[#crates + 1] = entry
-		else
-			entry.searchName = WritSearchName(entry.name)
+		end
+	end
+
+	if type(data) == "table" and type(data.writs) == "table" then
+		for i = 1, #data.writs do
+			local item = data.writs[i]
+			local name = "Craftsman's Writ: " .. item
+			local key = name:lower()
+			seen[key] = true
+			local entry = MakeEntry("writ", name, counts[key], icons[key], links[key])
+			entry.searchName = item
 			writs[#writs + 1] = entry
 		end
 	end
 
-	table.sort(crates, function(a, b) return a.name < b.name end)
-	table.sort(writs, function(a, b) return a.name < b.name end)
+	for key, count in pairs(counts) do
+		if not seen[key] then
+			local name = names[key]
+			local kind = Classify(name)
+			if kind == "crate" then
+				local entry = MakeEntry("crate", name, count, icons[key], links[key])
+				entry.reagents = {}
+				crates[#crates + 1] = entry
+			elseif kind == "writ" then
+				local entry = MakeEntry("writ", name, count, icons[key], links[key])
+				entry.searchName = WritSearchName(name)
+				writs[#writs + 1] = entry
+			end
+		end
+	end
+
+	SortEntries(crates)
+	SortEntries(writs)
 end
 
 local function TermsFor(entry)
 	local terms = {}
-	if entry.kind == "writ" then
-		if entry.searchName then
-			terms[1] = entry.searchName
-		end
-		return terms
-	end
 	local seen = {}
-	for i = 1, #(entry.reagents or {}) do
-		local name = entry.reagents[i].name
+	local function add(name)
+		if type(name) ~= "string" or Secret(name) then
+			return
+		end
+		name = Trim(name)
 		local key = name:lower()
-		if not seen[key] then
+		if key ~= "" and not seen[key] then
 			seen[key] = true
 			terms[#terms + 1] = name
 		end
+	end
+	add(entry.name)
+	if entry.kind == "writ" then
+		add(entry.searchName)
+		return terms
+	end
+	for i = 1, #(entry.reagents or {}) do
+		add(entry.reagents[i].name)
 	end
 	return terms
 end
@@ -587,7 +654,18 @@ local function PlaceRow(index, entry, y)
 	row:SetSize(ROW_WIDTH, 40)
 	row.icon:SetTexture(entry.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
 	row.name:SetText(QualityPrefix(entry.link) .. entry.name .. "|r")
-	row.count:SetText(entry.count > 1 and ("x" .. entry.count) or "")
+	local owned = (entry.count or 0) > 0
+	if owned then
+		row.count:SetText("|cffffffffx" .. entry.count .. "|r")
+		row.name:SetAlpha(1)
+		row.detail:SetAlpha(1)
+		row.icon:SetAlpha(1)
+	else
+		row.count:SetText("|cff8a8172x0|r")
+		row.name:SetAlpha(0.72)
+		row.detail:SetAlpha(0.72)
+		row.icon:SetAlpha(0.45)
+	end
 	local detail = DetailText(entry)
 	row.detail:SetText(detail)
 	local reagentCount = 1
@@ -618,7 +696,7 @@ local function Render()
 		y = PlaceHeader(headerIndex, title, y)
 		if #entries == 0 then
 			headerIndex = headerIndex + 1
-			y = PlaceHeader(headerIndex, "|cffb0a890None in your bags.|r", y)
+			y = PlaceHeader(headerIndex, "|cffb0a890None listed.|r", y)
 			return
 		end
 		for i = 1, #entries do
@@ -632,12 +710,23 @@ local function Render()
 	Section("Craftsman's Writs", writs)
 
 	frame.content:SetSize(ROW_WIDTH, math.max(1, -y))
+	local owned = 0
+	for i = 1, #crates do
+		if crates[i].count > 0 then
+			owned = owned + 1
+		end
+	end
+	for i = 1, #writs do
+		if writs[i].count > 0 then
+			owned = owned + 1
+		end
+	end
 	local total = #crates + #writs
-	frame.status:SetText(total == 0 and "Nothing in your bags." or (total .. " in your bags."))
+	frame.status:SetText(owned .. " in your bags. " .. total .. " total.")
 end
 
 local function Refresh()
-	ScanBags()
+	BuildEntries()
 	Render()
 end
 
@@ -686,26 +775,28 @@ local function BuildFrame()
 		frame = CreateFrame("Frame", "WowBoxFrame", UIParent)
 		local bg = frame:CreateTexture(nil, "BACKGROUND")
 		bg:SetAllPoints()
-		bg:SetColorTexture(0.04, 0.03, 0.02, 0.94)
+		bg:SetColorTexture(0.07, 0.06, 0.05, 1)
 	else
 		local backdropOk = pcall(frame.SetBackdrop, frame, {
-			bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+			bgFile = "Interface\\Buttons\\WHITE8X8",
 			edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-			tile = true,
-			tileSize = 32,
+			tile = false,
 			edgeSize = 32,
 			insets = { left = 11, right = 12, top = 12, bottom = 11 },
 		})
-		if not backdropOk then
-			local bg = frame:CreateTexture(nil, "BACKGROUND")
-			bg:SetAllPoints()
-			if bg.SetColorTexture then
-				bg:SetColorTexture(0.04, 0.03, 0.02, 0.94)
+		if backdropOk and frame.SetBackdropColor then
+			frame:SetBackdropColor(0.07, 0.06, 0.05, 1)
+			if frame.SetBackdropBorderColor then
+				frame:SetBackdropBorderColor(0.85, 0.7, 0.35, 1)
 			end
 		end
+		local bg = frame:CreateTexture(nil, "BACKGROUND")
+		bg:SetPoint("TOPLEFT", 8, -8)
+		bg:SetPoint("BOTTOMRIGHT", -8, 8)
+		bg:SetColorTexture(0.07, 0.06, 0.05, 1)
 	end
 
-	frame:SetSize(440, 520)
+	frame:SetSize(560, 560)
 	frame:SetFrameStrata("HIGH")
 	frame:SetToplevel(true)
 	frame:SetMovable(true)
@@ -730,7 +821,7 @@ local function BuildFrame()
 	hint:SetPoint("TOPLEFT", 16, -38)
 	hint:SetPoint("TOPRIGHT", -16, -38)
 	hint:SetJustifyH("LEFT")
-	hint:SetText("Click a crate to shop every fill option. Click a writ to shop the item it asks for.")
+	hint:SetText("Every crate and writ in the game. x0 is not in your bags. Click to search that item and what it needs.")
 
 	local scroll = CreateFrame("ScrollFrame", "WowBoxScrollFrame", frame, "UIPanelScrollFrameTemplate")
 	scroll:SetPoint("TOPLEFT", 14, -78)
@@ -792,31 +883,27 @@ local function Toggle()
 end
 
 local function Debug()
-	ScanBags()
+	BuildEntries()
 	local entry = crates[1] or writs[1]
 	if not entry then
-		Print("No Waylaid Crate or Craftsman's Writ in your bags.")
+		Print("The crate and writ catalog is empty.")
 		return
 	end
-	Print(entry.name .. " tooltip:")
-	local lines = entry.lines or {}
-	if #lines == 0 then
-		Print("  (no tooltip lines)")
-	end
-	for i = 1, #lines do
-		Print("  " .. i .. ": " .. lines[i])
-	end
-	if entry.kind == "crate" then
-		local reagents = entry.reagents or {}
-		if #reagents == 0 then
-			Print("Parsed no reagents.")
+	local owned = 0
+	for i = 1, #crates do
+		if crates[i].count > 0 then
+			owned = owned + 1
 		end
-		for i = 1, #reagents do
-			Print(string.format("  reagent %d x %s", reagents[i].qty, reagents[i].name))
-		end
-	else
-		Print("Writ search: " .. tostring(entry.searchName))
 	end
+	for i = 1, #writs do
+		if writs[i].count > 0 then
+			owned = owned + 1
+		end
+	end
+	Print(string.format("%d crates, %d writs, %d of them in your bags.", #crates, #writs, owned))
+	Print(entry.name .. " x" .. entry.count)
+	local terms = TermsFor(entry)
+	Print("Search: " .. table.concat(terms, ", "))
 end
 
 local function Command(msg)

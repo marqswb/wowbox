@@ -1,11 +1,12 @@
 ## Interface: 16001
 ## Interface-Camelot: 16001
 ## Title: WowBox
-## Notes: Lists Waylaid Crates and Craftsman's Writs in your bags and searches them with Auctionator.
+## Notes: Every Waylaid Crate and Craftsman's Writ, with bag counts, searched through Auctionator.
 ## Author: marqswb
-## Version: 1.0.0
+## Version: 1.1.0
 ## SavedVariables: WowBoxDB
 ## OptionalDeps: Auctionator
 ## Category: Auction & Economy
 
+wowbox_data.lua
 wowbox.lua

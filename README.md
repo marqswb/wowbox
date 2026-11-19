@@ -1,10 +1,10 @@
 # WowBox
 
-WoW Forever addon. Lists the Waylaid Crates and Craftsman's Writs in your bags. Click one and Auctionator searches those items in its shopping tab, so you can see which crate fill is cheapest, or buy the item a writ asks for.
+WoW Forever addon. Lists every Waylaid Crate and every Craftsman's Writ, not only the ones in your bags. A count sits on each row: how many you are carrying, or x0 if you have none. What you have is listed first.
 
-A crate search includes every bundle on the crate, for example Dream Dust, Greater Nether Essence, Small Brilliant Shard and Large Brilliant Shard. A writ search uses the item in the name. Craftsman's Writ: Sniper Scope searches for Sniper Scope.
+Click a row and Auctionator searches that crate or writ itself, plus everything that fills it. A crate search is the crate and every bundle, so you can compare buying the crate with buying Dream Dust, Greater Nether Essence, and the rest. A writ search is the writ and the item it asks for. Craftsman's Writ: Sniper Scope searches for the writ and for Sniper Scope.
 
-Needs Auctionator.
+Needs Auctionator. The window background is solid, like the auction house.
 
 ## Install
 
@@ -20,7 +20,7 @@ The Battle.net / Steam install is usually:
 C:\Program Files (x86)\World of Warcraft\_forever_\Interface\AddOns\wowbox\
 ```
 
-That folder must contain `wowbox.toc` and `wowbox.lua` directly, not one directory deeper.
+That folder must contain `wowbox.toc`, `wowbox_data.lua` and `wowbox.lua` directly, not one directory deeper.
 
 From the `AddOns` folder:
 
