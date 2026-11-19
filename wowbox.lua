@@ -711,21 +711,26 @@ function ApplySort()
 		return db
 	end
 	local function cost(entry)
-		if entry.kind == "writ" then
-			return unitPrice(entry.searchName)
-		end
 		local best
-		local reagents = entry.reagents or {}
-		for i = 1, #reagents do
-			local unit = unitPrice(reagents[i].name)
-			if unit then
-				local total = unit * (reagents[i].qty or 1)
-				if not best or total < best then
-					best = total
+		if entry.kind == "writ" then
+			best = unitPrice(entry.searchName)
+		else
+			local reagents = entry.reagents or {}
+			for i = 1, #reagents do
+				local unit = unitPrice(reagents[i].name)
+				if unit then
+					local total = unit * (reagents[i].qty or 1)
+					if not best or total < best then
+						best = total
+					end
 				end
 			end
 		end
-		return best or unitPrice(entry.name)
+		local own = unitPrice(entry.name)
+		if best and own then
+			return best + own
+		end
+		return best or own
 	end
 	local function cmp(a, b)
 		if mode == "price" then
@@ -910,18 +915,23 @@ local function LineTotal(name, qty)
 end
 
 local function CheapestTotal(entry)
-	if entry.kind == "writ" then
-		return LineTotal(entry.searchName, 1)
-	end
 	local best
-	local reagents = entry.reagents or {}
-	for i = 1, #reagents do
-		local total = LineTotal(reagents[i].name, reagents[i].qty)
-		if total and (not best or total < best) then
-			best = total
+	if entry.kind == "writ" then
+		best = LineTotal(entry.searchName, 1)
+	else
+		local reagents = entry.reagents or {}
+		for i = 1, #reagents do
+			local total = LineTotal(reagents[i].name, reagents[i].qty)
+			if total and (not best or total < best) then
+				best = total
+			end
 		end
 	end
-	return best
+	local own = LineTotal(entry.name, 1)
+	if best and own then
+		return best + own
+	end
+	return best or own
 end
 
 local function PriceSuffix(name, qty)
