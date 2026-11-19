@@ -1209,10 +1209,23 @@ local function DetailText(entry)
 	if #reagents == 0 then
 		return "|cffff8080Could not read the crate list. /wowbox debug|r"
 	end
+	local cheapestIndex
+	local cheapestValue
+	for i = 1, #reagents do
+		local total = LineTotal(reagents[i].name, reagents[i].qty)
+		if total and (not cheapestValue or total < cheapestValue) then
+			cheapestValue = total
+			cheapestIndex = i
+		end
+	end
 	local lines = {}
 	for i = 1, #reagents do
 		local reagent = reagents[i]
-		lines[i] = string.format("|cffffffff%d|r  %s%s", reagent.qty, reagent.name, PriceSuffix(reagent.name, reagent.qty))
+		local name = reagent.name
+		if i == cheapestIndex then
+			name = "|cff00ff00" .. name .. "|r"
+		end
+		lines[i] = string.format("|cffffffff%d|r  %s%s", reagent.qty, name, PriceSuffix(reagent.name, reagent.qty))
 	end
 	local cratePrice = PriceSuffix(entry.name, 1)
 	if cratePrice ~= "" then
